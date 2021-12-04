@@ -1,0 +1,21 @@
+﻿  FileSystem.cpp
+C:\Users\ASUS\Desktop\FileSystem\FileSystem\string_s.h(15,20): warning C4018: '<': signed/unsigned mismatch
+C:\Users\ASUS\Desktop\FileSystem\FileSystem\string_s.h(28,20): warning C4018: '<': signed/unsigned mismatch
+C:\Users\ASUS\Desktop\FileSystem\FileSystem\string_s.h(46,12): warning C4018: '>': signed/unsigned mismatch
+C:\Users\ASUS\Desktop\FileSystem\FileSystem\conv.h(65,20): warning C4018: '<': signed/unsigned mismatch
+C:\Users\ASUS\Desktop\FileSystem\FileSystem\conv.h(75,20): warning C4018: '<': signed/unsigned mismatch
+C:\Users\ASUS\Desktop\FileSystem\FileSystem\conv.h(106,41): warning C4244: '+=': conversion from 'double' to 'int', possible loss of data
+C:\Users\ASUS\Desktop\FileSystem\FileSystem\conv.h(119,20): warning C4018: '<': signed/unsigned mismatch
+C:\Users\ASUS\Desktop\FileSystem\FileSystem\conv.h(134,20): warning C4018: '<': signed/unsigned mismatch
+C:\Users\ASUS\Desktop\FileSystem\FileSystem\conv.h(145,11): warning C4018: '<=': signed/unsigned mismatch
+C:\Users\ASUS\Desktop\FileSystem\FileSystem\conv.h(152,10): warning C4018: '<': signed/unsigned mismatch
+C:\Users\ASUS\Desktop\FileSystem\FileSystem\conv.h(163,11): warning C4018: '<=': signed/unsigned mismatch
+C:\Users\ASUS\Desktop\FileSystem\FileSystem\conv.h(170,10): warning C4018: '<': signed/unsigned mismatch
+C:\Users\ASUS\Desktop\FileSystem\FileSystem\FileSystem.cpp(114,16): warning C4101: 'block': unreferenced local variable
+C:\Users\ASUS\Desktop\FileSystem\FileSystem\FileSystem.cpp(166,16): warning C4101: 'block': unreferenced local variable
+C:\Users\ASUS\Desktop\FileSystem\FileSystem\FileSystem.cpp(864,29): warning C4018: '<': signed/unsigned mismatch
+C:\Users\ASUS\Desktop\FileSystem\FileSystem\FileSystem.cpp(953,31): warning C4018: '<': signed/unsigned mismatch
+C:\Users\ASUS\Desktop\FileSystem\FileSystem\FileSystem.cpp(969,20): warning C4018: '<': signed/unsigned mismatch
+C:\Users\ASUS\Desktop\FileSystem\FileSystem\FileSystem.cpp(1168,25): warning C4018: '<': signed/unsigned mismatch
+C:\Users\ASUS\Desktop\FileSystem\FileSystem\FileSystem.cpp(205): warning C4172: returning address of local variable or temporary: res
+  FileSystem.vcxproj -> C:\Users\ASUS\Desktop\FileSystem\Debug\FileSystem.exe
