@@ -8,3 +8,4 @@ for %%F in ("*.dat") do (
 	if !modulo!==0 del "%%F" /s /q
 )
 endlocal
+pause
