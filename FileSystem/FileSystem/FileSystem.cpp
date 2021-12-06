@@ -6,7 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <conio.h>
-#include <math.h>
+#include <math.h>	
 #include <time.h>
 #include <Windows.h>
 #include <sys/stat.h>
@@ -17,6 +17,7 @@
 #include "conv.h"
 #include "string_s.h"
 #include "AES.h"
+#include "simple.h"
 #define OFFSET_CLUS 4
 #define RETRY_SIZE 64
 #define MAX 100
@@ -47,11 +48,13 @@ bool InitializeVolume();
 void Print(unsigned char* block);
 bool CreateVolume();
 bool FormatVolume();
+bool ExistPasswordVolume();
 bool SetPasswordVolume(const char* password);
 bool CheckPasswordVolume(const char* password);
 bool ChangePasswordVolume(const char* password);
 bool RemovePasswordVolume();
 void ListFile();
+bool ExistPasswordFile(const char* file);
 bool SetPasswordFile(const char* password, const char* file);
 bool CheckPasswordFile(const char* password, const char* file);
 bool ChangePasswordFile(const char* password, const char* file);
@@ -512,13 +515,26 @@ bool FormatVolume()
 	unsigned char* FatBlock = (unsigned char*)malloc(BLOCK_SIZE * sizeof(unsigned char*));
 	ReadBlock(blockBoot, FatBlock);
 
-	WriteOffset(FatBlock, "00", SystemClus, true);
-	WriteOffset(FatBlock, "04", SystemClus, true);
-	WriteOffset(FatBlock, "08", EofClus, true);
+	WriteOffset(FatBlock, "00", SystemClus, true);									// Cluster 0 (= System Cluster)
+	WriteOffset(FatBlock, "04", SystemClus, true);									// Cluster 1 (= System Cluster)
+	WriteOffset(FatBlock, "08", EofClus, true);										// Cluster 2 (= Start Cluster = Eof Cluster)
 
 	WriteBlock(blockBoot, FatBlock);
 	free(FatBlock);
 
+	return true;
+}
+
+// Exist password volume
+bool ExistPasswordVolume()
+{
+	unsigned char* BootBlock = (unsigned char*)malloc(BLOCK_SIZE * sizeof(unsigned char*));
+	ReadBlock(0, BootBlock);
+
+	if (Hex2Dec(ReadOffset(BootBlock, "30", 1, true)) == 0)
+		return false;
+
+	free(BootBlock);
 	return true;
 }
 
@@ -616,6 +632,7 @@ bool RemovePasswordVolume()
 // List of file (file tree)
 void ListFile()
 {
+	printf("\n\n");
 	printf("%s\n", fileName);
 
 	bool retCode = false;
@@ -681,6 +698,59 @@ void ListFile()
 		else blockEntry = IndexCluster(Hex2Dec(ReadFat(fatTab)));
 		fatTab = Hex2Dec(ReadFat(fatTab));
 	}
+}
+
+// Exist password file
+bool ExistPasswordFile(const char* file)
+{
+	bool retCode = false;
+	bool matchFile = false;
+	int fatTab = beginClus;
+	int blockEntry = blockSystem;
+	while (1)
+	{
+		for (int indexBlock = blockEntry; indexBlock < blockEntry + blockClus; indexBlock++)
+		{
+			unsigned char* Entry = (unsigned char*)malloc(BLOCK_SIZE * sizeof(unsigned char*));
+			ReadBlock(indexBlock, Entry);
+
+			for (int offset = 0; offset < BLOCK_SIZE; offset += RETRY_SIZE)
+			{
+				if (Entry[offset] == 0x00) {
+					retCode = true; break;
+				}
+				else
+				{
+					// Main entry
+					if (Entry[offset + 35] == 0xff)
+					{
+						char* x1 = Hex2String(ReadOffset(Entry, Dec2Hex(offset), 8, false));
+						char* x2;
+						if (strlen(file) <= 8) x2 = strsub(file, 0, strrfind(file, '.'));
+						else x2 = strsub(file, 0, 8);
+						if (strcmp(x1, x2) == 0) matchFile = true;
+					}
+
+					if (matchFile)
+					{
+						if (Hex2Dec(ReadOffset(Entry, Dec2Hex(offset + 32), 1, true)) == 0)
+							return false;
+						else return true;
+
+						break;
+					}
+				}
+			}
+
+			free(Entry);
+			if (retCode) break;
+		}
+		if (Hex2Dec(ReadFat(fatTab)) == Hex2Dec(EofClus)) break;
+		else blockEntry = IndexCluster(Hex2Dec(ReadFat(fatTab)));
+		fatTab = Hex2Dec(ReadFat(fatTab));
+	}
+
+	return false;
 }
 
 // Set password file
@@ -1089,12 +1159,25 @@ bool ImportFile(const char* file)
 	}
 
 	// Write cluster in FAT table
-	for (int i = 0; i < EmptyCluster.size(); i++)
+	int j = 0;
+	for (int i = EmptyCluster[0] / (byteBlock / OFFSET_CLUS) + blockBoot; i <= EmptyCluster[EmptyCluster.size() - 1] / (byteBlock / OFFSET_CLUS) + blockBoot; i++)
 	{
-		if (i == EmptyCluster.size() - 1)
-			WriteBlock(EmptyCluster[i] / (byteBlock / OFFSET_CLUS) + blockBoot, WriteFat(EmptyCluster[i], EofClus));
-		else
-			WriteBlock(EmptyCluster[i] / (byteBlock / OFFSET_CLUS) + blockBoot, WriteFat(EmptyCluster[i], Dec2Hex(EmptyCluster[i + 1])));
+		unsigned char* block = (unsigned char*)malloc(BLOCK_SIZE * sizeof(unsigned char*));
+		ReadBlock(i, block);
+
+		while ((int)(EmptyCluster[j] / (byteBlock / OFFSET_CLUS) + blockBoot) == i)
+		{
+			if (j == EmptyCluster.size() - 1)
+			{
+				WriteOffset(block, Dec2Hex(EmptyCluster[j] % (byteBlock / OFFSET_CLUS) * OFFSET_CLUS), EofClus, true);
+				break;
+			}
+			else WriteOffset(block, Dec2Hex(EmptyCluster[j] % (byteBlock / OFFSET_CLUS) * OFFSET_CLUS), Dec2Hex(EmptyCluster[j + 1]), true);
+			j++;
+		}
+
+		WriteBlock(i, block);
+		free(block);
 	}
 
 	// Write description of file
@@ -1166,14 +1249,12 @@ bool OutportFile(const char* file)
 						fclose(f);
 						
 						int cluster = startCluster;
-						int countCluster = 0;
 						while (1)
 						{
 							unsigned char* ClusterFile = (unsigned char*)malloc(CLUSTER_SIZE * sizeof(unsigned char*));
 							ReadCluster(cluster, ClusterFile);
-							WriteCluster(countCluster, dwFile, ClusterFile);
+							WriteCluster(cluster - startCluster, dwFile, ClusterFile);
 							free(ClusterFile);
-							countCluster++;
 							cluster = Hex2Dec(ReadFat(cluster));
 							if (cluster == Hex2Dec(EofClus)) break;
 						}						
@@ -1277,8 +1358,22 @@ bool DeletedFile(const char* file)
 						}
 						free(NullCluster);
 
-						for (int i = 0; i < FileCluster.size(); i++)
-							WriteBlock(FileCluster[i] / (byteBlock / OFFSET_CLUS) + blockBoot, WriteFat(FileCluster[i], FreeClus));
+						int j = 0;
+						for (int i = FileCluster[0] / (byteBlock / OFFSET_CLUS) + blockBoot; i <= FileCluster[FileCluster.size() - 1] / (byteBlock / OFFSET_CLUS) + blockBoot; i++)
+						{
+							unsigned char* block = (unsigned char*)malloc(BLOCK_SIZE * sizeof(unsigned char*));
+							ReadBlock(i, block);
+
+							while ((int)(FileCluster[j] / (byteBlock / OFFSET_CLUS) + blockBoot) == i)
+							{
+								WriteOffset(block, Dec2Hex(FileCluster[j] % (byteBlock / OFFSET_CLUS) * OFFSET_CLUS), FreeClus, true);
+								if (j == FileCluster.size() - 1) break; 
+								j++;
+							}
+
+							WriteBlock(i, block);
+							free(block);
+						}
 
 						matchFile = false;
 						break;
@@ -1340,12 +1435,7 @@ int main()
 		FILE* file;
 		if (file = fopen(fileName, "r"))
 		{
-			unsigned char* BootBlock = (unsigned char*)malloc(BLOCK_SIZE * sizeof(unsigned char*));
-			ReadBlock(0, BootBlock);
-			if (Hex2Dec(ReadOffset(BootBlock, "30", 1, true)) == 0) havePasswordVolume = false;
-			else havePasswordVolume = true;
-			free(BootBlock);
-
+			havePasswordVolume = ExistPasswordVolume();
 			fclose(file);
 			switch (option)
 			{
@@ -1390,10 +1480,14 @@ int main()
 					else printf("Cannot set password because password already existed!\n");
 					break;
 				case 4:
-					printf("TYPE PASSWORD: ");
-					scanf("%s", &password);
-					if (CheckPasswordVolume(password)) printf("Password match!\n");
-					else printf("Password doesn't match!\n");
+					if (!havePasswordVolume) printf("Cannot check password because no password!\n");
+					else
+					{
+						printf("TYPE PASSWORD: ");
+						scanf("%s", &password);
+						if (CheckPasswordVolume(password)) printf("Password match!\n");
+						else printf("Password doesn't match!\n");
+					}
 					break;
 				case 5:
 					if (!havePasswordVolume) printf("Cannot change password because no password!\n");
@@ -1450,10 +1544,14 @@ int main()
 					{
 						printf("NAME FILE: ");
 						scanf("%s", &cFile);
-						printf("TYPE PASSWORD: ");
-						scanf("%s", &password);
-						if (SetPasswordFile(password, cFile)) printf("Password is set successfully!\n");
-						else printf("Password already existed!\n");
+						if (!ExistPasswordFile(cFile))
+						{
+							printf("TYPE PASSWORD FILE: ");
+							scanf("%s", &passwordFile);
+							if (SetPasswordFile(passwordFile, cFile)) printf("Password file %s is set successfully!\n", cFile);
+							else printf("Password file already existed!\n");
+						}
+						else printf("Cannot set password file because password file already existed!\n");
 					}
 					else
 					{
@@ -1464,10 +1562,14 @@ int main()
 							printf("Password match!\n");
 							printf("NAME FILE: ");
 							scanf("%s", &cFile);
-							printf("TYPE PASSWORD FILE: ");
-							scanf("%s", &passwordFile);
-							if (SetPasswordFile(passwordFile, cFile)) printf("Password is set successfully!\n");
-							else printf("Password already existed!\n");
+							if (!ExistPasswordFile(cFile))
+							{
+								printf("TYPE PASSWORD FILE: ");
+								scanf("%s", &passwordFile);
+								if (SetPasswordFile(passwordFile, cFile)) printf("Password file %s is set successfully!\n", cFile);
+								else printf("Password file already existed!\n");
+							}
+							else printf("Cannot set password file because password file already existed!\n");
 						}
 						else printf("Password doesn't match!\n");
 					}
@@ -1477,10 +1579,14 @@ int main()
 					{
 						printf("NAME FILE: ");
 						scanf("%s", &cFile);
-						printf("TYPE PASSWORD: ");
-						scanf("%s", &password);
-						if (CheckPasswordFile(password, cFile)) printf("Password match!\n");
-						else printf("Password doesn't match or volume doesn't have a password!\n");
+						if (!ExistPasswordFile(cFile)) printf("Cannot check password file because no password file!\n");
+						else
+						{
+							printf("TYPE PASSWORD FILE: ");
+							scanf("%s", &passwordFile);
+							if (CheckPasswordFile(passwordFile, cFile)) printf("Password file %s match!\n", cFile);
+							else printf("Password file doesn't match!\n");
+						}
 					}
 					else
 					{
@@ -1491,10 +1597,14 @@ int main()
 							printf("Password match!\n");
 							printf("NAME FILE: ");
 							scanf("%s", &cFile);
-							printf("TYPE PASSWORD FILE: ");
-							scanf("%s", &passwordFile);
-							if (CheckPasswordFile(passwordFile, cFile)) printf("Password match!\n");
-							else printf("Password doesn't match or volume doesn't have a password!\n");
+							if (!ExistPasswordFile(cFile)) printf("Cannot check password file because no password file!\n");
+							else
+							{
+								printf("TYPE PASSWORD FILE: ");
+								scanf("%s", &passwordFile);
+								if (CheckPasswordFile(passwordFile, cFile)) printf("Password file %s match!\n", cFile);
+								else printf("Password file doesn't match!\n");
+							}
 						}
 						else printf("Password doesn't match!\n");
 					}
@@ -1504,16 +1614,20 @@ int main()
 					{
 						printf("NAME FILE: ");
 						scanf("%s", &cFile);
-						printf("TYPE OLD PASSWORD: ");
-						scanf("%s", &password);
-						if (CheckPasswordFile(password, cFile))
+						if (!ExistPasswordFile(cFile)) printf("Cannot change password file because no password file!\n");
+						else
 						{
-							printf("TYPE NEW PASSWORD: ");
-							scanf("%s", &password);
-							if (ChangePasswordFile(password, cFile)) printf("Password is changed!\n");
-							else printf("Password is the same\n");
+							printf("TYPE OLD PASSWORD FILE: ");
+							scanf("%s", &passwordFile);
+							if (CheckPasswordFile(passwordFile, cFile))
+							{
+								printf("TYPE NEW PASSWORD FILE: ");
+								scanf("%s", &passwordFile);
+								if (ChangePasswordFile(passwordFile, cFile)) printf("Password file %s is changed!\n", cFile);
+								else printf("Password file is the same\n");
+							}
+							else printf("Password file doesn't match!\n");
 						}
-						else printf("Password doesn't match!\n");
 					}
 					else
 					{
@@ -1524,16 +1638,20 @@ int main()
 							printf("Password match!\n");
 							printf("NAME FILE: ");
 							scanf("%s", &cFile);
-							printf("TYPE OLD PASSWORD FILE: ");
-							scanf("%s", &passwordFile);
-							if (CheckPasswordFile(passwordFile, cFile))
+							if (!ExistPasswordFile(cFile)) printf("Cannot change password file because no password file!\n");
+							else
 							{
-								printf("TYPE NEW PASSWORD FILE: ");
+								printf("TYPE OLD PASSWORD FILE: ");
 								scanf("%s", &passwordFile);
-								if (ChangePasswordFile(passwordFile, cFile)) printf("Password is changed!\n");
-								else printf("Password is the same\n");
+								if (CheckPasswordFile(passwordFile, cFile))
+								{
+									printf("TYPE NEW PASSWORD FILE: ");
+									scanf("%s", &passwordFile);
+									if (ChangePasswordFile(passwordFile, cFile)) printf("Password file %s is changed!\n", cFile);
+									else printf("Password file is the same\n");
+								}
+								else printf("Password file doesn't match!\n");
 							}
-							else printf("Password doesn't match!\n");
 						}
 						else printf("Password doesn't match!\n");
 					}
@@ -1543,14 +1661,18 @@ int main()
 					{
 						printf("NAME FILE: ");
 						scanf("%s", &cFile);
-						printf("TYPE PASSWORD: ");
-						scanf("%s", &password);
-						if (CheckPasswordFile(password, cFile))
+						if (!ExistPasswordFile(cFile)) printf("Cannot remove password file because no password file!\n");
+						else
 						{
-							if (RemovePasswordFile(cFile)) printf("Password is reset!\n");
-							else printf("\n");
+							printf("TYPE PASSWORD FILE: ");
+							scanf("%s", &passwordFile);
+							if (CheckPasswordFile(passwordFile, cFile))
+							{
+								if (RemovePasswordFile(cFile)) printf("Password file %s is reset!\n", cFile);
+								else printf("\n");
+							}
+							else printf("Password file doesn't match!\n");
 						}
-						else printf("Password doesn't match!\n");
 					}
 					else
 					{
@@ -1561,14 +1683,18 @@ int main()
 							printf("Password match!\n");
 							printf("NAME FILE: ");
 							scanf("%s", &cFile);
-							printf("TYPE PASSWORD FILE: ");
-							scanf("%s", &passwordFile);
-							if (CheckPasswordFile(passwordFile, cFile))
+							if (!ExistPasswordFile(cFile)) printf("Cannot remove password file because no password file!\n");
+							else
 							{
-								if (RemovePasswordFile(cFile)) printf("Password is reset!\n");
-								else printf("\n");
+								printf("TYPE PASSWORD FILE: ");
+								scanf("%s", &passwordFile);
+								if (CheckPasswordFile(passwordFile, cFile))
+								{
+									if (RemovePasswordFile(cFile)) printf("Password file %s is reset!\n", cFile);
+									else printf("\n");
+								}
+								else printf("Password file doesn't match!\n");
 							}
-							else printf("Password doesn't match!\n");
 						}
 						else printf("Password doesn't match!\n");
 					}
@@ -1578,7 +1704,7 @@ int main()
 					{
 						printf("IMPORT FILE: ");
 						scanf("%s", &cFile);
-						if (ImportFile(cFile)) printf("Importing file successfully!\n");
+						if (ImportFile(cFile)) printf("Importing file %s successfully!\n", cFile);
 						else printf("File is not existed!\n");
 					}
 					else
@@ -1590,7 +1716,7 @@ int main()
 							printf("Password match!\n");
 							printf("IMPORT FILE: ");
 							scanf("%s", &cFile);
-							if (ImportFile(cFile)) printf("Importing file successfully!\n");
+							if (ImportFile(cFile)) printf("Importing file %s successfully!\n", cFile);
 							else printf("File is not existed!\n");
 						}
 						else printf("Password doesn't match!\n");
@@ -1601,8 +1727,22 @@ int main()
 					{
 						printf("OUTPORT FILE: ");
 						scanf("%s", &cFile);
-						if (OutportFile(cFile)) printf("Outporting file successfully!\n");
-						else printf("File is not existed!\n");
+						if (!ExistPasswordFile(cFile))
+						{
+							if (OutportFile(cFile)) printf("Outporting file %s successfully!\n", cFile);
+							else printf("File is not existed!\n");
+						}
+						else
+						{
+							printf("TYPE PASSWORD FILE: ");
+							scanf("%s", &passwordFile);
+							if (CheckPasswordFile(passwordFile, cFile))
+							{
+								if (OutportFile(cFile)) printf("Outporting file %s successfully!\n", cFile);
+								else printf("File is not existed!\n");
+							}
+							else printf("Password doesn't match!\n");
+						}
 					}
 					else
 					{
@@ -1613,8 +1753,22 @@ int main()
 							printf("Password match!\n");
 							printf("OUTPORT FILE: ");
 							scanf("%s", &cFile);
-							if (OutportFile(cFile)) printf("Outporting file successfully!\n");
-							else printf("File is not existed!\n");
+							if (!ExistPasswordFile(cFile))
+							{
+								if (OutportFile(cFile)) printf("Outporting file %s successfully!\n", cFile);
+								else printf("File is not existed!\n");
+							}
+							else
+							{
+								printf("TYPE PASSWORD FILE: ");
+								scanf("%s", &passwordFile);
+								if (CheckPasswordFile(passwordFile, cFile))
+								{
+									if (OutportFile(cFile)) printf("Outporting file %s successfully!\n", cFile);
+									else printf("File is not existed!\n");
+								}
+								else printf("Password doesn't match!\n");
+							}
 						}
 						else printf("Password doesn't match!\n");
 					}
@@ -1624,8 +1778,22 @@ int main()
 					{
 						printf("DELETED FILE: ");
 						scanf("%s", &cFile);
-						if (DeletedFile(cFile)) printf("Deleting file successfully\n");
-						else printf("File is not existed!\n");
+						if (!ExistPasswordFile(cFile))
+						{
+							if (DeletedFile(cFile)) printf("Deleting file %s successfully\n", cFile);
+							else printf("File is not existed!\n");
+						}
+						else
+						{
+							printf("TYPE PASSWORD FILE: ");
+							scanf("%s", &passwordFile);
+							if (CheckPasswordFile(passwordFile, cFile))
+							{
+								if (DeletedFile(cFile)) printf("Deleting file %s successfully\n", cFile);
+								else printf("File is not existed!\n");
+							}
+							else printf("Password doesn't match!\n");
+						}
 					}
 					else
 					{
@@ -1636,8 +1804,22 @@ int main()
 							printf("Password match!\n");
 							printf("DELETED FILE: ");
 							scanf("%s", &cFile);
-							if (DeletedFile(cFile)) printf("Deleting file successfully\n");
-							else printf("File is not existed!\n");
+							if (!ExistPasswordFile(cFile))
+							{
+								if (DeletedFile(cFile)) printf("Deleting file %s successfully\n", cFile);
+								else printf("File is not existed!\n");
+							}
+							else
+							{
+								printf("TYPE PASSWORD FILE: ");
+								scanf("%s", &passwordFile);
+								if (CheckPasswordFile(passwordFile, cFile))
+								{
+									if (DeletedFile(cFile)) printf("Deleting file %s successfully\n", cFile);
+									else printf("File is not existed!\n");
+								}
+								else printf("Password doesn't match!\n");
+							}
 						}
 						else printf("Password doesn't match!\n");
 					}
@@ -1676,6 +1858,7 @@ int main()
 		system("pause");
 		system("cls");
 	}
+
 
 	return 0;
 }
